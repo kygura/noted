@@ -1,75 +1,33 @@
-# React + TypeScript + Vite
+# Noted v2
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A knowledge graph and note-taking system that helps you organize, connect, and reason about your thoughts and sources.
 
-Currently, two official plugins are available:
+## Core Concepts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+**Notes** are the atomic unit of the system—individual pieces of content you author in Markdown. Each Note has a `kind` (either `thought` for your own reasoning or `source` for external references) and participates in a knowledge graph through **Edges**.
 
-## React Compiler
+**Edges** are directed relationships between Notes that capture how ideas connect. They can express support, contradictions, elaborations, references, or general relationships, with each edge tracked by its source (user, agent, or import) and status (draft, approved, or rejected).
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+**Regions** are named groupings of Notes created by you or the agent to cluster related concepts, making large graphs more navigable.
 
-Note: This will impact Vite dev & build performances.
+The **Agent Pipeline** runs after each save: it embeds your Note's content using OpenAI's API and infers new Edges to semantically similar Notes using cosine similarity and GPT-4o-mini.
 
-## Expanding the ESLint configuration
+The **Graph View** visualizes your knowledge as a force-directed 2D graph where nodes are Notes and edges show their relationships. You can open any Note from the graph into the **Note Editor** for editing.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Getting Started
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Tech Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **React + TypeScript** for the UI
+- **Vite** for fast development and builds
+- **TipTap** (ProseMirror) for the Note Editor—a WYSIWYG interface that renders blocks inline and serializes to Markdown on save
+- **OpenAI API** for embeddings and edge inference
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Development
+
+See `CONTEXT.md` for the complete domain glossary and architectural terms.

@@ -12,8 +12,16 @@ export interface Note {
   placementRationale: string | null
   revisionCount: number
   importSource: string | null
+  archivedAt: string | null
+  embedding: number[] | null
+  contentHash: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface AppSettings {
+  id: 'app'
+  openaiApiKey: string | null
 }
 
 export interface Region {
