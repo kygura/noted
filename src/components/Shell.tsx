@@ -3,6 +3,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { Sidebar } from '@/components/Sidebar'
 import { NotesView } from '@/components/NotesView'
 import { MapView } from '@/components/MapView'
+import { AtlasView } from '@/components/atlas/AtlasView'
 import { ReviewPlaceholder } from '@/components/ReviewPlaceholder'
 import { ImportExportView } from '@/components/ImportExportView'
 import { SettingsView } from '@/components/SettingsView'
@@ -10,7 +11,7 @@ import { SearchOverlay } from '@/components/SearchOverlay'
 import { useHotkey } from '@/hooks/useHotkey'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 
-type View = 'notes' | 'map' | 'review' | 'import-export' | 'settings'
+type View = 'notes' | 'map' | 'atlas' | 'review' | 'import-export' | 'settings'
 
 interface ShellProps {
   theme: 'light' | 'dark'
@@ -132,6 +133,9 @@ export function Shell({ theme, onToggleTheme }: ShellProps) {
           {activeView === 'map' && (
             <MapView onOpenNote={handleMapOpenNote} />
           )}
+          {activeView === 'atlas' && (
+            <AtlasView onOpenNote={handleMapOpenNote} />
+          )}
           {activeView === 'review' && <ReviewPlaceholder />}
           {activeView === 'import-export' && (
             <ImportExportView onDone={() => setActiveView('notes')} />
@@ -205,6 +209,7 @@ function MobileNav({ activeView, onViewChange }: {
   const items: { view: View; label: string }[] = [
     { view: 'notes', label: 'Notes' },
     { view: 'map', label: 'Map' },
+    { view: 'atlas', label: 'Atlas' },
     { view: 'review', label: 'Review' },
     { view: 'settings', label: 'Settings' },
   ]

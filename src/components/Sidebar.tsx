@@ -2,7 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db'
 import type { Region } from '@/types'
 
-type View = 'notes' | 'map' | 'review' | 'import-export' | 'settings'
+type View = 'notes' | 'map' | 'atlas' | 'review' | 'import-export' | 'settings'
 
 interface SidebarProps {
   activeView: View
@@ -71,6 +71,12 @@ export function Sidebar({ activeView, onViewChange, onNewNote, onSearch }: Sideb
           active={activeView === 'map'}
           onClick={() => onViewChange('map')}
           icon={<MapIcon />}
+        />
+        <NavItem
+          label="Atlas"
+          active={activeView === 'atlas'}
+          onClick={() => onViewChange('atlas')}
+          icon={<CompassIcon />}
         />
         <NavItem
           label="Review"
@@ -233,6 +239,15 @@ function MapIcon() {
       <rect x="14" y="3" width="7" height="7" rx="1" />
       <rect x="3" y="14" width="7" height="7" rx="1" />
       <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  )
+}
+
+function CompassIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
     </svg>
   )
 }
