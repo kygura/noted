@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db'
 import { useEnsureEmbeddings } from '@/hooks/useEnsureEmbeddings'
@@ -23,6 +23,10 @@ interface AtlasViewProps {
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 
+function hasFiniteEmbedding(embedding: number[] | null): embedding is number[] {
+  return Array.isArray(embedding) && embedding.length > 0 && embedding.every(Number.isFinite)
+}
+
 function useDark(): boolean {
   const [dark, setDark] = useState(
     () => document.documentElement.getAttribute('data-theme') === 'dark',
@@ -44,14 +48,24 @@ function prefersReducedMotion(): boolean {
 export function AtlasView({ onOpenNote }: AtlasViewProps) {
   const notesRaw = useLiveQuery(() => db.notes.filter(n => n.archivedAt === null).toArray())
   const notes = useMemo(() => notesRaw ?? [], [notesRaw])
+  const atlasNotes = useDeferredValue(notes)
   const regionsRaw = useLiveQuery(() => db.regions.toArray())
   const regions = useMemo(() => regionsRaw ?? [], [regionsRaw])
   const edgesRaw = useLiveQuery(() => db.edges.toArray())
   const edges = useMemo(() => edgesRaw ?? [], [edgesRaw])
 
   const dark = useDark()
-  const reduceMotion = useRef(prefersReducedMotion()).current
-  const batchState = useEnsureEmbeddings()
+  const [reduceMotion] = useState(prefersReducedMotion)
+  const {
+    state: batchState,
+    paused: embeddingPaused,
+    hasApiKey,
+    runMissing: runMissingEmbeddings,
+    rerunAll: rerunAllEmbeddings,
+    pause: pauseEmbeddings,
+    resume: resumeEmbeddings,
+    cancel: cancelEmbeddings,
+  } = useEnsureEmbeddings()
   const { query, setQuery, queryEmbedding, loading, clear } = useConceptQuery()
 
   const [focusId, setFocusId] = useState<string | null>(null)
@@ -63,54 +77,54 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
 
   // ── layout: PCA → force settle (recomputed when the note set changes) ──
   const basePositions = useMemo(() => {
-    const projected = projectEmbeddings(notes.map(n => ({ id: n.id, embedding: n.embedding })))
+    const projected = projectEmbeddings(atlasNotes.map(n => ({ id: n.id, embedding: n.embedding })))
     const input = [...projected].map(([id, pos]) => ({ id, pos }))
     return settle(input, { radius: 30 })
-  }, [notes])
+  }, [atlasNotes])
 
   // ── query scores ──────────────────────────────────────────────
   const scores = useMemo(() => {
     if (!queryEmbedding || !query.trim()) return null
     const m = new Map<string, number>()
-    for (const n of notes) m.set(n.id, n.embedding ? cosineSimilarity(n.embedding, queryEmbedding) : 0)
+    for (const n of atlasNotes) m.set(n.id, hasFiniteEmbedding(n.embedding) ? cosineSimilarity(n.embedding, queryEmbedding) : 0)
     return m
-  }, [notes, queryEmbedding, query])
+  }, [atlasNotes, queryEmbedding, query])
 
   const canGather = !!scores
-  useEffect(() => { if (!scores && gathering) setGathering(false) }, [scores, gathering])
+  const activeGathering = gathering && canGather
 
   // ── gather-around-query: relevance phyllotaxis (relevant at centre) ──
   const gatherPositions = useMemo(() => {
     const m = new Map<string, Vec2>()
     if (!scores) return m
-    const ranked = [...notes].sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
+    const ranked = [...atlasNotes].sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
     ranked.forEach((n, i) => {
       const angle = i * GOLDEN_ANGLE
       const radius = Math.sqrt(i) * 46
       m.set(n.id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius })
     })
     return m
-  }, [notes, scores])
+  }, [atlasNotes, scores])
 
-  const positions = gathering && scores ? gatherPositions : basePositions
+  const positions = activeGathering ? gatherPositions : basePositions
 
   // ── derived geometry ──────────────────────────────────────────
   const nodeViews = useMemo<AtlasNodeView[]>(() =>
-    notes.map(n => ({
+    atlasNotes.map(n => ({
       id: n.id,
       pos: positions.get(n.id) ?? { x: 0, y: 0 },
       regionId: n.regionId,
       title: getTitle(n.contentMd),
-    })), [notes, positions])
+    })), [atlasNotes, positions])
 
   const field = useMemo(() =>
-    gathering ? null : computeField(nodeViews.map(v => ({ id: v.id, regionId: v.regionId, pos: v.pos }))),
-    [nodeViews, gathering])
+    activeGathering ? null : computeField(nodeViews.map(v => ({ id: v.id, regionId: v.regionId, pos: v.pos }))),
+    [nodeViews, activeGathering])
   const territories = useMemo(() => (field ? territoryOutlines(field) : []), [field])
   const relief = useMemo(() => (field ? reliefContours(field, 6) : []), [field])
 
   const labels = useMemo<RegionLabelView[]>(() => {
-    if (gathering) return []
+    if (activeGathering) return []
     const acc = new Map<string, { sx: number; sy: number; n: number }>()
     for (const v of nodeViews) {
       if (v.regionId == null) continue
@@ -122,7 +136,7 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
     return [...acc].map(([rid, e]) => ({
       regionId: rid, name: name.get(rid) ?? '', pos: { x: e.sx / e.n, y: e.sy / e.n },
     })).filter(l => l.name)
-  }, [nodeViews, regions, gathering])
+  }, [nodeViews, regions, activeGathering])
 
   const legendRegions = useMemo<LegendRegion[]>(() => {
     const counts = new Map<string | null, number>()
@@ -149,6 +163,9 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
 
   const focusNote = useMemo<Note | null>(() =>
     focusId ? notes.find(n => n.id === focusId) ?? null : null, [focusId, notes])
+
+  const missingEmbeddingCount = useMemo(() =>
+    notes.filter(n => !hasFiniteEmbedding(n.embedding)).length, [notes])
 
   // ── keyboard: arrows move focus, Tab cycles territories, Esc clears ──
   const moveFocus = useCallback((key: string) => {
@@ -184,19 +201,19 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
       const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ||
         (el instanceof HTMLElement && el.isContentEditable)
       if (typing) return
-      if (e.key === 'Escape') { setFocusId(null); setMenu(null); if (query) clear(); if (gathering) setGathering(false) }
+      if (e.key === 'Escape') { setFocusId(null); setMenu(null); if (query) clear(); if (activeGathering) setGathering(false) }
       else if (e.key === 'Tab') { e.preventDefault(); cycleTerritory(e.shiftKey ? -1 : 1) }
       else if (e.key.startsWith('Arrow')) { e.preventDefault(); moveFocus(e.key) }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [moveFocus, cycleTerritory, query, clear, gathering])
+  }, [moveFocus, cycleTerritory, query, clear, activeGathering])
 
   // Reframe when entering/leaving gather mode.
   useEffect(() => {
     const id = setTimeout(() => canvasRef.current?.fit(), 30)
     return () => clearTimeout(id)
-  }, [gathering])
+  }, [activeGathering])
 
   // ── context menus ─────────────────────────────────────────────
   const closeMenu = useCallback(() => setMenu(null), [])
@@ -223,45 +240,45 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
         x: clientX, y: clientY, title: 'Atlas',
         items: [
           { label: 'Fit view', onClick: () => canvasRef.current?.fit() },
+          { label: `Embed missing notes (${missingEmbeddingCount})`, disabled: missingEmbeddingCount === 0, onClick: runMissingEmbeddings },
+          { label: `Re-run all embeddings (${notes.length})`, disabled: notes.length === 0, onClick: rerunAllEmbeddings },
           {
             label: 'Re-cluster unclustered notes',
             onClick: () => {
-              const targets = notes.filter(n => n.embedding && !n.regionId).map(n => n.id)
+              const targets = notes.filter(n => hasFiniteEmbedding(n.embedding) && !n.regionId).map(n => n.id)
               if (targets.length) assignRegionsInBatch(targets)
             },
           },
         ],
       })
     }
-  }, [notes, onOpenNote])
+  }, [missingEmbeddingCount, notes, onOpenNote, rerunAllEmbeddings, runMissingEmbeddings])
 
   if (notes.length === 0) return <EmptyAtlas batching={!!batchState} />
 
-  const hasEmbeddings = notes.some(n => n.embedding)
+  const hasEmbeddings = notes.some(n => hasFiniteEmbedding(n.embedding))
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
       <QueryBar
-        query={query} loading={loading} gathering={gathering} canGather={canGather}
+        query={query} loading={loading} gathering={activeGathering} canGather={canGather}
         onChange={setQuery} onClear={clear}
         onToggleGather={() => setGathering(g => !g)}
         onFit={() => canvasRef.current?.fit()}
       />
 
-      {batchState && (
-        <div style={{
-          padding: 'var(--space-2) var(--space-6)', background: 'var(--bg-elevated)',
-          borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center',
-          gap: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)',
-          fontFamily: 'var(--font-mono)', flexShrink: 0,
-        }}>
-          <span>{batchState.phase === 'embedding' ? 'mapping notes' : 'forming territories'}…</span>
-          <div style={{ flex: 1, maxWidth: 180, height: 2, background: 'var(--border-subtle)', borderRadius: 999, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: batchState.total > 0 ? `${(batchState.done / batchState.total) * 100}%` : '0%', background: 'var(--text-accent)', transition: 'width 0.2s ease' }} />
-          </div>
-          <span style={{ opacity: 0.6 }}>{batchState.done}/{batchState.total}</span>
-        </div>
-      )}
+      <EmbeddingControlBar
+        state={batchState}
+        paused={embeddingPaused}
+        hasApiKey={hasApiKey}
+        missingCount={missingEmbeddingCount}
+        totalCount={notes.length}
+        onRunMissing={runMissingEmbeddings}
+        onRerunAll={rerunAllEmbeddings}
+        onPause={pauseEmbeddings}
+        onResume={resumeEmbeddings}
+        onCancel={cancelEmbeddings}
+      />
 
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <AtlasCanvas
@@ -283,7 +300,7 @@ export function AtlasView({ onOpenNote }: AtlasViewProps) {
           onContextMenu={handleContextMenu}
         />
 
-        {!gathering && <Legend regions={legendRegions} dark={dark} onPick={(rid) => {
+        {!activeGathering && <Legend regions={legendRegions} dark={dark} onPick={(rid) => {
           const l = labels.find(x => x.regionId === rid)
           if (l) canvasRef.current?.focusOn(l.pos, 1.1)
         }} />}
@@ -335,5 +352,94 @@ function EmptyAtlas({ batching }: { batching: boolean }) {
         </p>
       </div>
     </div>
+  )
+}
+
+interface EmbeddingControlBarProps {
+  state: ReturnType<typeof useEnsureEmbeddings>['state']
+  paused: boolean
+  hasApiKey: boolean | null
+  missingCount: number
+  totalCount: number
+  onRunMissing: () => void
+  onRerunAll: () => void
+  onPause: () => void
+  onResume: () => void
+  onCancel: () => void
+}
+
+function EmbeddingControlBar({
+  state,
+  paused,
+  hasApiKey,
+  missingCount,
+  totalCount,
+  onRunMissing,
+  onRerunAll,
+  onPause,
+  onResume,
+  onCancel,
+}: EmbeddingControlBarProps) {
+  const active = state !== null
+  const phaseLabel = state?.phase === 'embedding'
+    ? 'mapping notes'
+    : state?.phase === 'regenerating'
+      ? 'rebuilding embeddings'
+      : state?.phase === 'edges'
+        ? 'tracing connections'
+        : 'forming territories'
+  const idleLabel = hasApiKey === false
+    ? 'OpenAI key required for semantic mapping'
+    : missingCount > 0
+      ? `${missingCount} ${missingCount === 1 ? 'note needs' : 'notes need'} embeddings`
+      : 'embeddings ready'
+
+  return (
+    <div style={{
+      padding: 'var(--space-2) var(--space-6)', background: 'var(--bg-elevated)',
+      borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center',
+      gap: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)',
+      fontFamily: 'var(--font-mono)', flexShrink: 0, flexWrap: 'wrap',
+    }}>
+      <span>{active ? `${phaseLabel}${paused ? ' paused' : '...'}` : idleLabel}</span>
+      {state && (
+        <>
+          <div style={{ flex: '1 1 120px', maxWidth: 180, height: 2, background: 'var(--border-subtle)', borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: state.total > 0 ? `${(state.done / state.total) * 100}%` : '0%', background: 'var(--text-accent)', transition: 'width 0.2s ease' }} />
+          </div>
+          <span style={{ opacity: 0.6 }}>{state.done}/{state.total}</span>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 'var(--space-2)', marginLeft: 'auto', flexWrap: 'wrap' }}>
+        {active ? (
+          <>
+            <ControlButton onClick={paused ? onResume : onPause}>{paused ? 'resume' : 'pause'}</ControlButton>
+            <ControlButton onClick={onCancel}>cancel</ControlButton>
+          </>
+        ) : (
+          <>
+            <ControlButton onClick={onRunMissing} disabled={hasApiKey === false || missingCount === 0}>embed missing</ControlButton>
+            <ControlButton onClick={onRerunAll} disabled={hasApiKey === false || totalCount === 0}>rerun all</ControlButton>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ControlButton({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)',
+        border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-full)',
+        padding: '2px var(--space-3)', opacity: disabled ? 0.45 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {children}
+    </button>
   )
 }

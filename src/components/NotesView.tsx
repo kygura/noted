@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db'
 import { NoteEditorTipTap } from '@/components/NoteEditorTipTap'
+import { archiveNotes, deleteNote as deleteSingleNote, deleteNotes, toggleNoteArchive } from '@/lib/noteActions'
 import type { Note } from '@/types'
 
 interface NotesViewProps {
@@ -13,6 +14,8 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
   const [internalEditingId, setInternalEditingId] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
   const [filterQuery, setFilterQuery] = useState('')
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
 
   const editingId = initialNoteId !== undefined ? (initialNoteId ?? null) : internalEditingId
   const isNew = editingId === '__new__'
@@ -35,6 +38,11 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
     return list
   }, [notes, showArchived, filterQuery])
 
+  const selectedFilteredIds = useMemo(() =>
+    filtered.filter(n => selectedIds.has(n.id)).map(n => n.id), [filtered, selectedIds])
+
+  const allFilteredSelected = filtered.length > 0 && selectedFilteredIds.length === filtered.length
+
   const openNote = useCallback((id: string) => {
     setEditingId(id)
   }, [setEditingId])
@@ -46,6 +54,54 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
   const goBack = useCallback(() => {
     setEditingId(null)
   }, [setEditingId])
+
+  const toggleSelectMode = useCallback(() => {
+    if (selectionMode) setSelectedIds(new Set())
+    setSelectionMode(active => !active)
+  }, [selectionMode])
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const selectAllFiltered = useCallback(() => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      for (const note of filtered) next.add(note.id)
+      return next
+    })
+  }, [filtered])
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set())
+  }, [])
+
+  const handleBulkArchive = useCallback(async () => {
+    if (selectedFilteredIds.length === 0) return
+    await archiveNotes(selectedFilteredIds, !showArchived)
+    setSelectedIds(new Set())
+    setSelectionMode(false)
+  }, [selectedFilteredIds, showArchived])
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedFilteredIds.length === 0) return
+    const label = selectedFilteredIds.length === 1 ? 'this note' : `${selectedFilteredIds.length} notes`
+    if (!confirm(`Permanently delete ${label}? This cannot be undone.`)) return
+    await deleteNotes(selectedFilteredIds)
+    setSelectedIds(new Set())
+    setSelectionMode(false)
+  }, [selectedFilteredIds])
+
+  const handleArchiveViewToggle = useCallback(() => {
+    setShowArchived(s => !s)
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+  }, [])
 
   if (editingId) {
     return (
@@ -93,20 +149,14 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
               </p>
             )}
           </div>
-          <button
-            onClick={() => setShowArchived(s => !s)}
-            style={{
-              fontSize: 'var(--text-xs)',
-              fontFamily: 'var(--font-mono)',
-              color: showArchived ? 'var(--text-accent)' : 'var(--text-tertiary)',
-              padding: 'var(--space-1) var(--space-3)',
-              borderRadius: 'var(--radius-full)',
-              background: showArchived ? 'var(--selection-bg)' : 'transparent',
-              transition: 'all var(--duration-fast) ease',
-            }}
-          >
-            {showArchived ? 'show active' : 'show archived'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <HeaderButton active={selectionMode} onClick={toggleSelectMode}>
+              {selectionMode ? 'cancel select' : 'select'}
+            </HeaderButton>
+            <HeaderButton active={showArchived} onClick={handleArchiveViewToggle}>
+              {showArchived ? 'show active' : 'show archived'}
+            </HeaderButton>
+          </div>
         </div>
 
         {/* Search */}
@@ -152,6 +202,19 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
           )}
         </div>
 
+        {selectionMode && (
+          <BulkSelectionBar
+            selectedCount={selectedFilteredIds.length}
+            totalCount={filtered.length}
+            allSelected={allFilteredSelected}
+            archived={showArchived}
+            onSelectAll={selectAllFiltered}
+            onClear={clearSelection}
+            onArchive={handleBulkArchive}
+            onDelete={handleBulkDelete}
+          />
+        )}
+
         {/* New note button */}
         <button
           onClick={openNew}
@@ -195,9 +258,12 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
               <NoteCard
                 key={note.id}
                 note={note}
-                onClick={() => openNote(note.id)}
-                onArchive={() => toggleArchive(note)}
-                onDelete={() => deleteNote(note.id)}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(note.id)}
+                onToggleSelected={() => toggleSelected(note.id)}
+                onClick={() => selectionMode ? toggleSelected(note.id) : openNote(note.id)}
+                onArchive={() => toggleNoteArchive(note)}
+                onDelete={() => deleteSingleNoteWithConfirm(note.id)}
               />
             ))}
           </div>
@@ -207,22 +273,106 @@ export function NotesView({ initialNoteId, onNoteIdChange }: NotesViewProps) {
   )
 }
 
-async function toggleArchive(note: Note) {
-  await db.notes.update(note.id, {
-    archivedAt: note.archivedAt ? null : new Date().toISOString(),
-  })
-}
-
-async function deleteNote(id: string) {
+async function deleteSingleNoteWithConfirm(id: string) {
   if (!confirm('Permanently delete this note? This cannot be undone.')) return
-  await db.transaction('rw', [db.notes, db.edges], async () => {
-    await db.edges.filter(e => e.srcNoteId === id || e.dstNoteId === id).delete()
-    await db.notes.delete(id)
-  })
+  await deleteSingleNote(id)
 }
 
-function NoteCard({ note, onClick, onArchive, onDelete }: {
+function HeaderButton({ active, onClick, children }: {
+  active: boolean
+  onClick: () => void
+  children: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: 'var(--text-xs)',
+        fontFamily: 'var(--font-mono)',
+        color: active ? 'var(--text-accent)' : 'var(--text-tertiary)',
+        padding: 'var(--space-1) var(--space-3)',
+        borderRadius: 'var(--radius-full)',
+        background: active ? 'var(--selection-bg)' : 'transparent',
+        transition: 'all var(--duration-fast) ease',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function BulkSelectionBar({
+  selectedCount,
+  totalCount,
+  allSelected,
+  archived,
+  onSelectAll,
+  onClear,
+  onArchive,
+  onDelete,
+}: {
+  selectedCount: number
+  totalCount: number
+  allSelected: boolean
+  archived: boolean
+  onSelectAll: () => void
+  onClear: () => void
+  onArchive: () => void
+  onDelete: () => void
+}) {
+  return (
+    <div style={{
+      marginBottom: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)',
+      border: '1px solid var(--border-default)', borderRadius: 'var(--radius-lg)',
+      background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center',
+      justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)',
+          color: selectedCount > 0 ? 'var(--text-accent)' : 'var(--text-tertiary)',
+        }}>
+          {selectedCount} selected
+        </span>
+        <BulkButton disabled={totalCount === 0 || allSelected} onClick={onSelectAll}>select all shown</BulkButton>
+        <BulkButton disabled={selectedCount === 0} onClick={onClear}>clear</BulkButton>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <BulkButton disabled={selectedCount === 0} onClick={onArchive}>{archived ? 'unarchive' : 'archive'}</BulkButton>
+        <BulkButton danger disabled={selectedCount === 0} onClick={onDelete}>delete</BulkButton>
+      </div>
+    </div>
+  )
+}
+
+function BulkButton({ children, disabled, danger, onClick }: {
+  children: string
+  disabled?: boolean
+  danger?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)',
+        color: danger ? 'var(--color-contradicts)' : 'var(--text-tertiary)',
+        padding: 'var(--space-1) var(--space-3)', borderRadius: 'var(--radius-full)',
+        border: '1px solid var(--border-subtle)', opacity: disabled ? 0.45 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function NoteCard({ note, selectionMode, selected, onToggleSelected, onClick, onArchive, onDelete }: {
   note: Note
+  selectionMode: boolean
+  selected: boolean
+  onToggleSelected: () => void
   onClick: () => void
   onArchive: () => void
   onDelete: () => void
@@ -262,25 +412,52 @@ function NoteCard({ note, onClick, onArchive, onDelete }: {
     <div style={{
       position: 'relative',
       background: 'var(--bg-surface)',
-      border: '1px solid var(--border-subtle)',
+      border: selected ? '1px solid var(--text-accent)' : '1px solid var(--border-subtle)',
       borderRadius: 'var(--radius-lg)',
       transition: 'border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease',
       opacity: note.archivedAt ? 0.6 : 1,
+      boxShadow: selected ? '0 0 0 3px var(--selection-bg)' : 'none',
     }}
       onMouseEnter={e => {
-        e.currentTarget.style.borderColor = 'var(--border-default)'
+        e.currentTarget.style.borderColor = selected ? 'var(--text-accent)' : 'var(--border-default)'
         e.currentTarget.style.boxShadow = 'var(--shadow-sm)'
       }}
       onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--border-subtle)'
-        e.currentTarget.style.boxShadow = 'none'
+        e.currentTarget.style.borderColor = selected ? 'var(--text-accent)' : 'var(--border-subtle)'
+        e.currentTarget.style.boxShadow = selected ? '0 0 0 3px var(--selection-bg)' : 'none'
       }}
     >
+      {selectionMode && (
+        <button
+          type="button"
+          aria-label={selected ? 'Deselect note' : 'Select note'}
+          aria-pressed={selected}
+          onClick={onToggleSelected}
+          style={{
+            position: 'absolute', left: 16, top: 18, zIndex: 2,
+            width: 22, height: 22, borderRadius: 'var(--radius-sm)',
+            border: selected ? '1px solid var(--text-accent)' : '1px solid var(--border-default)',
+            background: selected ? 'var(--text-accent)' : 'var(--bg-elevated)',
+            color: selected ? 'var(--bg-primary)' : 'transparent',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {selected && (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          )}
+        </button>
+      )}
       <button
         onClick={onClick}
         style={{
           display: 'block', width: '100%', textAlign: 'left',
-          padding: 'var(--space-5) var(--space-6)', cursor: 'pointer',
+          padding: selectionMode
+            ? 'var(--space-5) var(--space-6) var(--space-5) var(--space-12)'
+            : 'var(--space-5) var(--space-6)',
+          cursor: 'pointer',
         }}
       >
         {title && (

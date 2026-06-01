@@ -27,7 +27,8 @@ const EMPTY: FieldGrid = {
  * territory map. One field, two readings — so borders and contours always agree.
  */
 export function computeField(nodes: AtlasNode[], opts: FieldOptions = {}): FieldGrid {
-  if (nodes.length === 0) return { ...EMPTY }
+  const finiteNodes = nodes.filter(n => Number.isFinite(n.pos.x) && Number.isFinite(n.pos.y))
+  if (finiteNodes.length === 0) return { ...EMPTY }
 
   const bandwidth = opts.bandwidth ?? 42
   const padding = opts.padding ?? bandwidth * 1.5
@@ -35,7 +36,7 @@ export function computeField(nodes: AtlasNode[], opts: FieldOptions = {}): Field
   const maxDim = opts.maxDim ?? 220
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const n of nodes) {
+  for (const n of finiteNodes) {
     minX = Math.min(minX, n.pos.x); minY = Math.min(minY, n.pos.y)
     maxX = Math.max(maxX, n.pos.x); maxY = Math.max(maxY, n.pos.y)
   }
@@ -58,7 +59,7 @@ export function computeField(nodes: AtlasNode[], opts: FieldOptions = {}): Field
   // Region index table.
   const regionIds: (string | null)[] = []
   const regionIndex = new Map<string | null, number>()
-  for (const n of nodes) {
+  for (const n of finiteNodes) {
     if (!regionIndex.has(n.regionId)) {
       regionIndex.set(n.regionId, regionIds.length)
       regionIds.push(n.regionId)
@@ -72,7 +73,7 @@ export function computeField(nodes: AtlasNode[], opts: FieldOptions = {}): Field
   const inv2s2 = 1 / (2 * bandwidth * bandwidth)
   const reach = Math.ceil((bandwidth * 3) / cellSize)
 
-  for (const n of nodes) {
+  for (const n of finiteNodes) {
     const ri = regionIndex.get(n.regionId)!
     const cx = (n.pos.x - origin.x) / cellSize
     const cy = (n.pos.y - origin.y) / cellSize

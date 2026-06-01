@@ -62,4 +62,22 @@ describe('projectEmbeddings', () => {
     expect(p1.get('b')).toEqual(p2.get('b'))
     expect(p1.get('b')).not.toEqual(p1.get('c'))
   })
+
+  it('does not let malformed embeddings poison the whole projection', () => {
+    const mixed: Projectable[] = [
+      { id: 'a', embedding: [1, 2, 3] },
+      { id: 'b', embedding: [2, 3] },
+      { id: 'c', embedding: [3, 4, 5] },
+      { id: 'd', embedding: [4, Number.NaN, 6] },
+    ]
+
+    const projected = projectEmbeddings(mixed)
+
+    for (const it of mixed) {
+      const pos = projected.get(it.id)
+      expect(pos).toBeDefined()
+      expect(Number.isFinite(pos!.x)).toBe(true)
+      expect(Number.isFinite(pos!.y)).toBe(true)
+    }
+  })
 })

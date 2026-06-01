@@ -12,7 +12,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeView, onViewChange, onNewNote, onSearch }: SidebarProps) {
-  const regions = useLiveQuery(() => db.regions.toArray()) ?? []
+  const regions = useLiveQuery(async () => {
+    const [allRegions, activeNotes] = await Promise.all([
+      db.regions.toArray(),
+      db.notes.filter(n => n.archivedAt === null && n.regionId !== null).toArray(),
+    ])
+    const activeRegionIds = new Set(activeNotes.map(n => n.regionId))
+    return allRegions.filter(region => activeRegionIds.has(region.id))
+  }) ?? []
   const noteCount = useLiveQuery(() => db.notes.filter(n => n.archivedAt === null).count()) ?? 0
   const isMac = navigator.platform.includes('Mac')
 
@@ -65,12 +72,6 @@ export function Sidebar({ activeView, onViewChange, onNewNote, onSearch }: Sideb
           active={activeView === 'notes'}
           onClick={() => onViewChange('notes')}
           icon={<StackIcon />}
-        />
-        <NavItem
-          label="Map"
-          active={activeView === 'map'}
-          onClick={() => onViewChange('map')}
-          icon={<MapIcon />}
         />
         <NavItem
           label="Atlas"
@@ -232,16 +233,7 @@ function StackIcon() {
   )
 }
 
-function MapIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  )
-}
+
 
 function CompassIcon() {
   return (
