@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Sidebar } from '@/components/Sidebar'
 import { NotesView } from '@/components/NotesView'
-import { MapView } from '@/components/MapView'
 import { AtlasView } from '@/components/atlas/AtlasView'
 import { ReviewPlaceholder } from '@/components/ReviewPlaceholder'
 import { ImportExportView } from '@/components/ImportExportView'
@@ -130,9 +129,7 @@ export function Shell({ theme, onToggleTheme }: ShellProps) {
               onNoteIdChange={setEditNoteId}
             />
           )}
-          {activeView === 'map' && (
-            <MapView onOpenNote={handleMapOpenNote} />
-          )}
+
           {activeView === 'atlas' && (
             <AtlasView onOpenNote={handleMapOpenNote} />
           )}

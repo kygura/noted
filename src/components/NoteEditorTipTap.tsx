@@ -15,6 +15,7 @@ import Suggestion from '@tiptap/suggestion'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db'
 import { runAgentPipeline } from '@/lib/agent'
+import { deleteNote, toggleNoteArchive } from '@/lib/noteActions'
 import type { Note } from '@/types'
 
 function getMarkdown(editor: NonNullable<ReturnType<typeof useEditor>>): string {
@@ -440,7 +441,7 @@ function NoteEditorInner({ initialNote, onBack, onDeleted }: {
     if (!id) return
     const note = await db.notes.get(id)
     if (!note) return
-    await db.notes.update(id, { archivedAt: note.archivedAt ? null : new Date().toISOString() })
+    await toggleNoteArchive(note)
     onBack()
   }, [onBack])
 
@@ -448,10 +449,7 @@ function NoteEditorInner({ initialNote, onBack, onDeleted }: {
     const id = currentNoteIdRef.current
     if (!id) return
     if (!confirm('Permanently delete this note? This cannot be undone.')) return
-    await db.transaction('rw', [db.notes, db.edges], async () => {
-      await db.edges.filter(e => e.srcNoteId === id || e.dstNoteId === id).delete()
-      await db.notes.delete(id)
-    })
+    await deleteNote(id)
     onDeleted()
   }, [onDeleted])
 

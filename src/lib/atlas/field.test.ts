@@ -40,6 +40,16 @@ describe('computeField', () => {
     const wy = f.origin.y + row * f.cellSize
     expect(Math.hypot(wx, wy)).toBeLessThan(15)
   })
+
+  it('ignores non-finite node coordinates', () => {
+    const f = computeField([
+      node('bad', 'A', Number.NaN, 0),
+      node('good', 'B', 0, 0),
+    ])
+
+    expect(f.cols).toBeGreaterThan(0)
+    expect(f.regionIds).toEqual(['B'])
+  })
 })
 
 describe('territoryOutlines', () => {

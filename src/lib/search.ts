@@ -68,9 +68,10 @@ export async function searchHybrid(
   return results.sort((a, b) => b.combinedScore - a.combinedScore)
 }
 
-export async function embedText(text: string, apiKey: string): Promise<number[]> {
+export async function embedText(text: string, apiKey: string, signal?: AbortSignal): Promise<number[]> {
   const res = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,

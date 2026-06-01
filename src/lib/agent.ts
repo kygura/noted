@@ -267,7 +267,7 @@ export async function removeRegion(regionId: string): Promise<void> {
   })
 }
 
-export async function assignRegionsInBatch(noteIds: string[]): Promise<void> {
+export async function assignRegionsInBatch(noteIds: string[], signal?: AbortSignal): Promise<void> {
   const apiKey = await getApiKey()
   if (!apiKey || noteIds.length === 0) return
 
@@ -302,6 +302,7 @@ Return ONLY valid JSON:
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -350,6 +351,7 @@ Return ONLY valid JSON:
       if (regionId) await db.notes.update(assignment.noteId, { regionId, domain: assignment.clusterName })
     }
   } catch (e) {
+    if (signal?.aborted) return
     console.error('Batch region assignment failed:', e)
   }
 }

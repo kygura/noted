@@ -34,13 +34,35 @@ function fixSign(v: number[]): number[] {
   return v[idx] < 0 ? v.map(x => -x) : v
 }
 
+function isFiniteEmbedding(embedding: number[] | null): embedding is number[] {
+  return Array.isArray(embedding) && embedding.length > 0 && embedding.every(Number.isFinite)
+}
+
+function dominantEmbeddingDimension(items: Projectable[]): number {
+  const counts = new Map<number, number>()
+  for (const it of items) {
+    if (!isFiniteEmbedding(it.embedding)) continue
+    counts.set(it.embedding.length, (counts.get(it.embedding.length) ?? 0) + 1)
+  }
+
+  let bestDim = 0
+  let bestCount = 0
+  for (const [dim, count] of counts) {
+    if (count > bestCount || (count === bestCount && dim > bestDim)) {
+      bestDim = dim
+      bestCount = count
+    }
+  }
+  return bestDim
+}
+
 /**
  * Top principal component of the centered rows via power iteration on the
  * covariance (implicitly, as Cv = Σ x (x·v)). `exclude` holds already-found
  * components to deflate against (Gram-Schmidt), yielding the next component.
  */
 function principalComponent(centered: number[][], dim: number, exclude: number[][]): number[] {
-  let v = seededVector(dim)
+  const v = seededVector(dim)
   // Orthogonalise the init against excluded components.
   for (const e of exclude) {
     let d = 0
@@ -84,8 +106,8 @@ export function projectEmbeddings(items: Projectable[]): Map<string, Vec2> {
   const result = new Map<string, Vec2>()
   if (items.length === 0) return result
 
-  const withEmb = items.filter(it => it.embedding && it.embedding.length > 0)
-  const dim = withEmb[0]?.embedding!.length ?? 0
+  const dim = dominantEmbeddingDimension(items)
+  const withEmb = items.filter(it => isFiniteEmbedding(it.embedding) && it.embedding.length === dim)
 
   let cloudRadius = 1
   if (withEmb.length > 0) {
@@ -122,7 +144,7 @@ export function projectEmbeddings(items: Projectable[]): Map<string, Vec2> {
   }
 
   // Place embedding-less notes on a deterministic ring just outside the cloud.
-  const missing = items.filter(it => !it.embedding || it.embedding.length === 0)
+  const missing = items.filter(it => !isFiniteEmbedding(it.embedding) || it.embedding.length !== dim)
   const ringR = cloudRadius * 1.25 + 1
   missing.forEach((it, i) => {
     const angle = (i * GOLDEN_ANGLE_RAD) % (Math.PI * 2)
