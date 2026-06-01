@@ -385,7 +385,9 @@ function EmbeddingControlBar({
     ? 'mapping notes'
     : state?.phase === 'regenerating'
       ? 'rebuilding embeddings'
-      : 'forming territories'
+      : state?.phase === 'edges'
+        ? 'tracing connections'
+        : 'forming territories'
   const idleLabel = hasApiKey === false
     ? 'OpenAI key required for semantic mapping'
     : missingCount > 0

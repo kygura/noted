@@ -1,11 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db } from '@/db'
-import { embedText } from '@/lib/search'
-import { assignRegionsInBatch } from '@/lib/agent'
+import { embedTexts, EMBED_CHAR_LIMIT } from '@/lib/search'
+import { assignRegionsInBatch, inferEdgesInBatch } from '@/lib/agent'
 import type { Note } from '@/types'
 
+// One request carries up to this many notes, capped by an estimated token
+// budget so we stay comfortably under OpenAI's 300k-token-per-request ceiling
+// and gentle on rate limits. ~4 chars/token → 400k chars ≈ 100k tokens.
+const EMBED_BATCH_ITEMS = 100
+const EMBED_BATCH_CHARS = 400_000
+
+function* chunkForEmbedding(notes: Note[]): Generator<Note[]> {
+  let chunk: Note[] = []
+  let chars = 0
+  for (const note of notes) {
+    const len = Math.min(note.contentMd.length, EMBED_CHAR_LIMIT)
+    if (chunk.length > 0 && (chunk.length >= EMBED_BATCH_ITEMS || chars + len > EMBED_BATCH_CHARS)) {
+      yield chunk
+      chunk = []
+      chars = 0
+    }
+    chunk.push(note)
+    chars += len
+  }
+  if (chunk.length > 0) yield chunk
+}
+
 export interface BatchState {
-  phase: 'embedding' | 'clustering' | 'regenerating'
+  phase: 'embedding' | 'clustering' | 'regenerating' | 'edges'
   done: number
   total: number
 }
@@ -133,23 +155,30 @@ export function useEnsureEmbeddings(): EmbeddingBatchControls {
     if (targetNotes.length > 0) {
       const phase = mode === 'all' ? 'regenerating' : 'embedding'
       setBatchState({ phase, done: 0, total: targetNotes.length })
-      for (let i = 0; i < targetNotes.length; i++) {
+
+      let done = 0
+      for (const chunk of chunkForEmbedding(targetNotes)) {
         if (!(await waitIfPaused(runId))) return
 
         const abortController = new AbortController()
         abortRef.current = abortController
         try {
-          const embedding = await embedText(targetNotes[i].contentMd, key, abortController.signal)
+          const embeddings = await embedTexts(chunk.map(n => n.contentMd), key, abortController.signal)
           if (runId !== runIdRef.current) return
-          await db.notes.update(targetNotes[i].id, { embedding })
+          await db.notes.bulkUpdate(
+            chunk.map((n, i) => ({ key: n.id, changes: { embedding: embeddings[i] } })),
+          )
         } catch (error) {
           if (abortController.signal.aborted || runId !== runIdRef.current) return
-          console.error('Embedding batch failed for', targetNotes[i].id, error)
+          // Leave this chunk's notes unembedded; they still satisfy
+          // needsEmbedding and get retried on the next mount.
+          console.error('Embedding batch failed for chunk of', chunk.length, error)
         } finally {
           if (abortRef.current === abortController) abortRef.current = null
         }
 
-        if (runId === runIdRef.current) setBatchState({ phase, done: i + 1, total: targetNotes.length })
+        done += chunk.length
+        if (runId === runIdRef.current) setBatchState({ phase, done, total: targetNotes.length })
       }
     }
 
@@ -168,6 +197,22 @@ export function useEnsureEmbeddings(): EmbeddingBatchControls {
       if (abortController.signal.aborted) return
       if (runId !== runIdRef.current) return
       setBatchState({ phase: 'clustering', done: 1, total: 1 })
+    }
+
+    if (!(await waitIfPaused(runId))) return
+
+    const needsEdges = refreshed.filter(n => hasFiniteEmbedding(n.embedding) && !n.contentHash).map(n => n.id)
+
+    if (needsEdges.length > 0) {
+      setBatchState({ phase: 'edges', done: 0, total: needsEdges.length })
+      const abortController = new AbortController()
+      abortRef.current = abortController
+      await inferEdgesInBatch(needsEdges, abortController.signal, (edgeDone, edgeTotal) => {
+        if (runId === runIdRef.current) setBatchState({ phase: 'edges', done: edgeDone, total: edgeTotal })
+      })
+      if (abortRef.current === abortController) abortRef.current = null
+      if (abortController.signal.aborted) return
+      if (runId !== runIdRef.current) return
     }
 
     if (runId === runIdRef.current) setBatchState(null)
